@@ -3,43 +3,45 @@ import pandas as pd
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 from pathlib import Path
+import os
 
-# 頁面設定
-st.set_page_config(page_title="汽車客戶資料表", layout="wide")
-st.title("🚗 汽車客戶資料管理系統")
+st.set_page_config(page_title="汽車客戶資料表 (CSV)", layout="wide")
+st.title("🚗 汽車客戶資料管理系統（CSV版）")
 
-# Excel 存檔路徑（固定名稱）
 desktop = Path.home() / "Desktop"
-excel_path = desktop / "汽車客戶資料.xlsx"
+csv_path = desktop / "汽車客戶資料.csv"
 
-# 嘗試讀取現有資料
-@st.cache_data(ttl=300)
+# 載入資料
 def load_data():
-    if excel_path.exists():
+    if csv_path.exists():
         try:
-            df = pd.read_excel(excel_path)
+            df = pd.read_csv(csv_path)
             return df
         except Exception as e:
             st.error(f"讀取資料失敗: {e}")
-    # 沒檔案回傳空表
     return pd.DataFrame(columns=[
         "姓名", "電話", "車牌", "車型", "本次保養日期", "本次里程",
         "下次保養日期", "下次保養里程", "維修明細", "總金額", "備註"
     ])
 
-# 載入資料
 if "customers" not in st.session_state:
     st.session_state.customers = load_data()
 
-# 儲存函式（覆寫檔案）
-def save_data(df):
+# 追加一筆資料到 CSV（不覆蓋）
+def append_data(new_row: dict):
+    df_new = pd.DataFrame([new_row])
+    header = not csv_path.exists()
+    df_new.to_csv(csv_path, mode='a', index=False, header=header)
+
+# 覆寫整個 CSV （編輯或刪除時用）
+def overwrite_data(df: pd.DataFrame):
     try:
-        df.to_excel(excel_path, index=False)
-        st.success(f"📁 資料已儲存到桌面：{excel_path}")
+        df.to_csv(csv_path, index=False)
+        st.success(f"📁 資料已儲存到桌面：{csv_path}")
     except Exception as e:
         st.error(f"儲存資料失敗: {e}")
 
-# ===== 新增客戶表單 =====
+# 新增客戶表單
 with st.expander("➕ 新增客戶資料"):
     with st.form("new_customer_form", clear_on_submit=True):
         col1, col2, col3 = st.columns(3)
@@ -49,14 +51,9 @@ with st.expander("➕ 新增客戶資料"):
         model = col1.text_input("車型")
         note = col2.text_input("備註")
 
-        # 本次保養日期
         today = datetime.today()
         service_date = col3.date_input("本次保養日期", value=today)
-
-        # 本次里程
         mileage = col1.number_input("本次里程 (公里)", min_value=0, step=1)
-
-        # 下次保養日期與里程
         next_service_date = service_date + relativedelta(months=6)
         next_mileage = mileage + 5000
 
@@ -67,9 +64,8 @@ with st.expander("➕ 新增客戶資料"):
         st.markdown("### 🛠 維修項目與價錢（最多 20 筆）")
         repairs = []
         total_price = 0
-
         for i in range(1, 21):
-            c1, c2 = st.columns([2, 1])
+            c1, c2 = st.columns([2,1])
             item = c1.text_input(f"項目 {i}", key=f"item_{i}")
             price = c2.number_input(f"價錢 {i}", min_value=0, step=100, key=f"price_{i}")
             if item.strip() != "":
@@ -92,19 +88,16 @@ with st.expander("➕ 新增客戶資料"):
                     "總金額": total_price,
                     "備註": note.strip()
                 }
-                st.session_state.customers = pd.concat(
-                    [st.session_state.customers, pd.DataFrame([new_row])],
-                    ignore_index=True
-                )
-                save_data(st.session_state.customers)
+                append_data(new_row)
+                # 更新 session_state 的資料表（重新讀取完整 CSV）
+                st.session_state.customers = load_data()
                 st.success("✅ 客戶資料已新增")
             else:
                 st.warning("⚠️ 請至少輸入『姓名』與『車牌』")
 
-# ===== 搜尋功能 =====
-search_keyword = st.text_input("🔍 搜尋姓名、車牌或維修項目：")
-
-if search_keyword.strip():
+# 搜尋功能
+search_keyword = st.text_input("🔍 搜尋姓名、車牌或維修項目：").strip()
+if search_keyword:
     df_filtered = st.session_state.customers[
         st.session_state.customers["姓名"].str.contains(search_keyword, case=False, na=False) |
         st.session_state.customers["車牌"].str.contains(search_keyword, case=False, na=False) |
@@ -113,7 +106,7 @@ if search_keyword.strip():
 else:
     df_filtered = st.session_state.customers
 
-# ===== 顯示表格 =====
+# 顯示客戶資料表格
 st.subheader("📋 客戶資料列表")
 if df_filtered.empty:
     st.info("目前沒有符合條件的資料。")
@@ -132,13 +125,11 @@ else:
             new_service_date = edit_col3.date_input("本次保養日期", value=pd.to_datetime(row["本次保養日期"]), key=f"service_date_{i}")
             new_mileage = edit_col1.number_input("本次里程", value=int(row["本次里程"]), step=100, key=f"mileage_{i}")
 
-            # 自動計算下次日期與里程
             next_service_date = new_service_date + relativedelta(months=6)
             next_mileage = new_mileage + 5000
             st.markdown(f"**下次保養日期：** {next_service_date.strftime('%Y-%m-%d')}")
             st.markdown(f"**下次保養里程：** {next_mileage} 公里")
 
-            # 維修明細和金額
             new_repairs = st.text_area("維修明細 (格式：項目 ($金額), 用逗號分隔)", value=row["維修明細"], key=f"repairs_{i}")
             new_total = st.number_input("總金額", value=int(row["總金額"]), step=100, key=f"total_{i}")
 
@@ -157,12 +148,12 @@ else:
                     "總金額": new_total,
                     "備註": new_note.strip()
                 }
-                save_data(st.session_state.customers)
+                overwrite_data(st.session_state.customers)
                 st.success(f"✅ 資料已更新：{new_name}（{new_plate}）")
 
             if col_delete.button("🗑 刪除此筆資料", key=f"delete_{i}"):
                 st.session_state.customers.drop(i, inplace=True)
                 st.session_state.customers.reset_index(drop=True, inplace=True)
-                save_data(st.session_state.customers)
+                overwrite_data(st.session_state.customers)
                 st.warning(f"🗑 資料已刪除：{row['姓名']}（{row['車牌']}）")
                 st.experimental_rerun()
